@@ -1,0 +1,116 @@
+---
+title: "COURSERA: Practical ML Assignment"
+author: "Tomas Klinger"
+date: "Sunday, August 24, 2014"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+---
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The main research question is whether we are able to distinguish these five ways using only the accelerometer data. 
+
+## Setting the stage
+
+```{r message=FALSE, results='hide', echo=FALSE}
+# Set working directory
+setwd("~/_R_Projects/1_Coursera_PracticalMachineLearning")
+
+# Load libraries
+library(RCurl)
+library(plyr)
+library(reshape2)
+library(ggplot2)
+library(caret)
+```
+
+Let us download the data from the specified source. The first file is the dataset we will use for training and validation of our model. The other file provides an additional test set for which we were to classify the activities and send them to Coursera for evaluation.
+```{r message=FALSE, results='hide'}
+
+# Training dataset
+urlfile<-'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+df_train<-read.csv(urlfile)
+
+# Testing dataset
+urlfile<-'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+df_test<-read.csv(urlfile)
+```
+
+
+
+## Exploratory analyis and data preparation
+
+First, we siimply view the data:
+```{r message=FALSE, results='hide'}
+# View data
+View(df_train)
+View(df_test)
+```
+
+It is obvious that there are some variables that are not used for all the datapoints. These are filled in only for the datapoints where the variable new_window is set to 'yes'. As these rows are a strange anomaly, we decided to leave them out. Also, without these rows all the variables whose name contain max|min|avg|amplitude|skewness|kurtosis|stddev|var are useless and thus we leave them, too.
+
+```{r message=FALSE, results='hide'}
+# Subsetting
+df_tr<-df_train[df_train$new_window=="no",!colnames(df_train) %in% grep("(max|min|avg|amplitude|skewness|kurtosis|stddev|var)\\_", names(df_train), value = TRUE)]
+```
+
+
+To have a quick look into the data, we vizualize a couple of variables by ggplot. We split the visualization into facets according to the variable and the user performing the activity. However, this plot does not show much.
+
+
+```{r message=FALSE, results='hide'}
+# Ggplot
+e2<-melt(df_tr[,c(21:27, which(colnames(df_tr)=="classe"), which(colnames(df_tr)=="user_name"))], id=c("classe","user_name"))
+ggplot(e2, aes(x=classe, y=value, fill=variable)) + 
+  geom_boxplot() +
+  ggtitle("Some variables according to user names") + facet_grid( variable ~ user_name, scales="free")
+```
+
+## Crossvalidation: Split train and test sets
+Even though we will be using models where cross-validation is built-in, we will split our data into training and validation set to confirm that our model does not overfit.
+
+```{r message=FALSE, results='hide'}
+## 60% of the sample size
+smp_size <- floor(0.6 * nrow(df_tr))
+
+## set the seed to make the partition reproductible
+set.seed(123)
+
+## Do the partitioning
+train_ind <- sample(seq_len(nrow(df_tr)), size = smp_size)
+
+train <- df_tr[train_ind, ]
+test <- df_tr[-train_ind, ]
+```
+
+## Modeling: Random forests
+We build a random forest model to predict the type of activity. We use the K-fold validation built into the Caret package to do a 3-fold validation. Finally, we fit the model to our training set.
+
+```{r message=FALSE, results='hide', warning=FALSE}
+## Set trainControl
+tc <- trainControl("oob", number=3, repeats=3, classProbs=TRUE, savePred=T) 
+
+## Do the modeling
+RFFit <- train(classe ~., data=train, method="rf", trControl=tc, preProc=c("center", "scale"))
+```
+
+## Validation on a test set
+We tried our model on the validation set we kept aside. The model performed very well with almost all matches!
+```{r message=FALSE}
+## Do the prediction
+test$prediction <- predict(RFFit, newdata = test)
+
+## Count matches
+test$match <- (test$classe == test$prediction)
+ddply(test, c("match"),  summarise, freq=length(match), .progress='win')
+```
+
+## Prediction of the true testing set
+Finally, we used our model to predict the 20 test cases given in the Coursera assignment. Generating the submission files according to the assignment description and submitting, we got 100% answers correct!
+```{r message=FALSE}
+# Subsetting
+df_te<-df_test[df_test$new_window=="no",!colnames(df_test) %in% grep("(max|min|avg|amplitude|skewness|kurtosis|stddev|var)\\_", names(df_test), value = TRUE)]
+
+# Prediction
+df_te$prediction <- predict(RFFit, newdata = df_te)
+```
